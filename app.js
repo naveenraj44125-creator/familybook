@@ -1,59 +1,186 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
 
-// Routes
+// Serve static files from current directory (where index.html, styles.css, script.js are located)
+app.use(express.static(__dirname));
+
+// Serve the original FamilyBook application
 app.get('/', (req, res) => {
-    res.send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>FamilyBook</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-                .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-                .header { text-align: center; color: #333; margin-bottom: 30px; }
-                .info { background: #e8f4fd; padding: 15px; border-radius: 5px; margin: 15px 0; }
-                .success { background: #d4edda; color: #155724; padding: 15px; border-radius: 5px; margin: 15px 0; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>🚀 FamilyBook</h1>
-                    <p>Node.js Application deployed via GitHub Actions</p>
-                </div>
-                
-                <div class="success">
-                    ✅ Application is running successfully!
-                </div>
-                
-                <div class="info">
-                    <h3>System Information</h3>
-                    <p><strong>Node.js Version:</strong> ${process.version}</p>
-                    <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'development'}</p>
-                    <p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
-                </div>
-                
-                <div class="info">
-                    <h3>API Endpoints</h3>
-                    <p><a href="/api/health">Health Check</a></p>
-                    <p><a href="/api/info">System Info</a></p>
-                </div>
-            </div>
-        </body>
-        </html>
-    `);
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Family data storage (in production, this would use a database)
+let families = {};
+let currentFamilyId = null;
+
+// API endpoint to create a new family
+app.post('/api/family', (req, res) => {
+    const { familyName, creatorName } = req.body;
+    const familyId = Date.now().toString();
+    
+    families[familyId] = {
+        id: familyId,
+        name: familyName,
+        creator: creatorName,
+        members: [
+            {
+                id: Date.now().toString(),
+                name: creatorName,
+                relationship: 'Creator',
+                photos: [],
+                videos: [],
+                addedAt: new Date().toISOString()
+            }
+        ],
+        relationships: [],
+        createdAt: new Date().toISOString()
+    };
+    
+    res.json({ 
+        success: true, 
+        familyId: familyId,
+        family: families[familyId]
+    });
+});
+
+// API endpoint to get family data
+app.get('/api/family/:familyId', (req, res) => {
+    const { familyId } = req.params;
+    
+    if (!families[familyId]) {
+        return res.status(404).json({ success: false, message: 'Family not found' });
+    }
+    
+    res.json({ 
+        success: true, 
+        family: families[familyId]
+    });
+});
+
+// API endpoint to add a family member
+app.post('/api/family/:familyId/member', (req, res) => {
+    const { familyId } = req.params;
+    const { name, relationship } = req.body;
+    
+    if (!families[familyId]) {
+        return res.status(404).json({ success: false, message: 'Family not found' });
+    }
+    
+    const member = {
+        id: Date.now().toString(),
+        name: name,
+        relationship: relationship,
+        photos: [],
+        videos: [],
+        addedAt: new Date().toISOString()
+    };
+    
+    families[familyId].members.push(member);
+    
+    res.json({ 
+        success: true, 
+        member: member,
+        family: families[familyId]
+    });
+});
+
+// API endpoint to add relationship
+app.post('/api/family/:familyId/relationship', (req, res) => {
+    const { familyId } = req.params;
+    const { fromMemberId, toMemberId, relationshipType } = req.body;
+    
+    if (!families[familyId]) {
+        return res.status(404).json({ success: false, message: 'Family not found' });
+    }
+    
+    const relationship = {
+        id: Date.now().toString(),
+        fromMemberId: fromMemberId,
+        toMemberId: toMemberId,
+        type: relationshipType,
+        createdAt: new Date().toISOString()
+    };
+    
+    families[familyId].relationships.push(relationship);
+    
+    res.json({ 
+        success: true, 
+        relationship: relationship,
+        family: families[familyId]
+    });
+});
+
+// API endpoint to get relationship chain
+app.get('/api/family/:familyId/relationship-chain/:fromId/:toId', (req, res) => {
+    const { familyId, fromId, toId } = req.params;
+    
+    if (!families[familyId]) {
+        return res.status(404).json({ success: false, message: 'Family not found' });
+    }
+    
+    const family = families[familyId];
+    const chain = findRelationshipChain(family, fromId, toId);
+    
+    res.json({ 
+        success: true, 
+        chain: chain
+    });
+});
+
+// Helper function to find relationship chain
+function findRelationshipChain(family, fromId, toId) {
+    if (fromId === toId) {
+        const member = family.members.find(m => m.id === fromId);
+        return [{ member: member, relationship: 'Same person' }];
+    }
+    
+    // Simple BFS to find shortest path
+    const visited = new Set();
+    const queue = [{ memberId: fromId, path: [] }];
+    
+    while (queue.length > 0) {
+        const { memberId, path } = queue.shift();
+        
+        if (visited.has(memberId)) continue;
+        visited.add(memberId);
+        
+        const member = family.members.find(m => m.id === memberId);
+        const currentPath = [...path, { member: member }];
+        
+        if (memberId === toId) {
+            return currentPath;
+        }
+        
+        // Find connected members
+        const connections = family.relationships.filter(r => 
+            r.fromMemberId === memberId || r.toMemberId === memberId
+        );
+        
+        for (const rel of connections) {
+            const nextMemberId = rel.fromMemberId === memberId ? rel.toMemberId : rel.fromMemberId;
+            if (!visited.has(nextMemberId)) {
+                queue.push({ 
+                    memberId: nextMemberId, 
+                    path: [...currentPath.slice(0, -1), { 
+                        member: member, 
+                        relationship: rel.type 
+                    }]
+                });
+            }
+        }
+    }
+    
+    return []; // No path found
+}
+
+// Health check endpoint (required for deployment)
 app.get('/api/health', (req, res) => {
     res.json({
         status: 'healthy',
@@ -62,18 +189,21 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+// System info endpoint
 app.get('/api/info', (req, res) => {
     res.json({
         status: 'success',
-        message: 'FamilyBook Node.js Application',
+        message: 'FamilyBook - Family Network Platform',
         version: '1.0.0',
         node_version: process.version,
         environment: process.env.NODE_ENV || 'development',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        features: ['Family Management', 'Photo Sharing', 'Relationship Mapping']
     });
 });
 
 app.listen(PORT, () => {
     console.log(`🚀 FamilyBook server running on port ${PORT}`);
     console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🌐 Access at: http://localhost:${PORT}`);
 });
